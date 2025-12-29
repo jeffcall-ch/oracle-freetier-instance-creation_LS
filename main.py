@@ -146,6 +146,58 @@ def send_email(subject, body, email, password):
             raise
 
 
+def send_startup_notification():
+    """Send an email notification when the script starts."""
+    if NOTIFY_EMAIL:
+        body = (
+            "<html><body>"
+            "<h2>OCI Instance Creation Script Started</h2>"
+            f"<p>The script has started and will attempt to create an instance with the following configuration:</p>"
+            f"<ul>"
+            f"<li><strong>Display Name:</strong> {DISPLAY_NAME}</li>"
+            f"<li><strong>Compute Shape:</strong> {OCI_COMPUTE_SHAPE}</li>"
+            f"<li><strong>Availability Domain:</strong> {OCT_FREE_AD}</li>"
+            f"<li><strong>Wait Time:</strong> {WAIT_TIME} seconds between attempts</li>"
+            f"</ul>"
+            "<p>You will receive periodic updates every 24 hours until the instance is created.</p>"
+            "</body></html>"
+        )
+        try:
+            send_email('OCI INSTANCE CREATION: Script Started', body, EMAIL, EMAIL_PASSWORD)
+            logging.info("Startup notification email sent successfully")
+        except Exception as e:
+            logging.error("Failed to send startup notification: %s", e)
+
+
+def send_periodic_update(attempt_count, elapsed_hours):
+    """Send a periodic status update email.
+    
+    Args:
+        attempt_count (int): Number of launch attempts made so far.
+        elapsed_hours (float): Hours elapsed since script started.
+    """
+    if NOTIFY_EMAIL:
+        body = (
+            "<html><body>"
+            "<h2>OCI Instance Creation - Status Update</h2>"
+            f"<p>The script is still running and attempting to create your instance.</p>"
+            f"<ul>"
+            f"<li><strong>Display Name:</strong> {DISPLAY_NAME}</li>"
+            f"<li><strong>Compute Shape:</strong> {OCI_COMPUTE_SHAPE}</li>"
+            f"<li><strong>Time Elapsed:</strong> {elapsed_hours:.1f} hours</li>"
+            f"<li><strong>Attempts Made:</strong> {attempt_count}</li>"
+            f"</ul>"
+            "<p>The script will continue trying until an instance is successfully created.</p>"
+            "<p>You will receive the next update in 24 hours or when the instance is created.</p>"
+            "</body></html>"
+        )
+        try:
+            send_email('OCI INSTANCE CREATION: 24-Hour Status Update', body, EMAIL, EMAIL_PASSWORD)
+            logging.info("Periodic update email sent after %.1f hours", elapsed_hours)
+        except Exception as e:
+            logging.error("Failed to send periodic update: %s", e)
+
+
 def list_all_instances(compartment_id):
     """Retrieve a list of all instances in the specified compartment.
 
@@ -430,7 +482,24 @@ def launch_instance():
     else:
         shape_config = oci.core.models.LaunchInstanceShapeConfigDetails(ocpus=1, memory_in_gbs=1)
 
+    # Initialize tracking variables for periodic updates
+    start_time = time.time()
+    last_notification_time = start_time
+    attempt_count = 0
+    notification_interval = 86400  # 24 hours in seconds
+
     while not instance_exist_flag:
+        attempt_count += 1
+        
+        # Check if 24 hours have passed since last notification
+        current_time = time.time()
+        elapsed_since_last_notification = current_time - last_notification_time
+        
+        if elapsed_since_last_notification >= notification_interval:
+            elapsed_hours = (current_time - start_time) / 3600
+            send_periodic_update(attempt_count, elapsed_hours)
+            last_notification_time = current_time
+        
         try:
             launch_instance_response = compute_client.launch_instance(
                 launch_instance_details=oci.core.models.LaunchInstanceDetails(
@@ -485,6 +554,7 @@ def launch_instance():
 
 if __name__ == "__main__":
     send_discord_message("🚀 OCI Instance Creation Script: Starting up! Let's create some cloud magic!")
+    send_startup_notification()
     try:
         launch_instance()
         send_discord_message("🎉 Success! OCI Instance has been created. Time to celebrate!")
